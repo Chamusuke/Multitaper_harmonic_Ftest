@@ -32,7 +32,7 @@ def dpss(npts, nw, k=None):
         タイムバンド幅積 (time-bandwidth product)        
     k : int
         defalt -> 2*nw-1
-        2*nw異能の場合,固有値0.8以上のDPSSを採用する
+        2*nw異能の場合,固有値0.90以上のDPSSを採用する
     
     **Return*
     dpss : ndarray [k, npts]
@@ -47,23 +47,23 @@ def dpss(npts, nw, k=None):
     k_DPSS, eigenvalues = windows.dpss(npts, nw, Kmax=k, sym=False, norm=2, return_ratios=True)
 
     if k >= 2 * nw:
-        valid_indices = np.where(eigenvalues >= 0.8)[0]
+        valid_indices = np.where(eigenvalues >= 0.90)[0]
         k_DPSS = k_DPSS[valid_indices]
         eigenvalues = eigenvalues[valid_indices]
         k = len(valid_indices)
-        print(f"A unique taper of 0.8 or more was selected. K={k}")
+        print(f"A unique taper of eigenvalues (0.8<) was selected. K={k}")
 
     return k_DPSS, eigenvalues, k
 
-def eigenspec(data, k_DPSS, nfft):
+def eigen_psd(data, k_DPSS, fs, nfft):
     """
-    各テーパーごとの固有周波数スペクトル及び固有パワースペクトル密度
+    各テーパーごとの固有周波数スペクトル及び固有パワースペクトル
     (Eigen Spectrum and PSD of each DPSS)
-    Jk : 固有周波数スペクトル (Eigen Spectrum)
+    Jk : 固有周波数スペクトル密度 (Eigen Spectrum)
     Sk : 固有パワースペクトル密度 (Eigen PSD)
     """
     tapered_data = k_DPSS * data[np.newaxis, :]  # shape: (K, N)
-    Jk = np.fft.fft(tapered_data, n=nfft, axis=1)  # shape: (K, nfft)
+    Jk = np.sqrt(1/fs)*np.fft.fft(tapered_data, n=nfft, axis=1)  # shape: (K, nfft)
     Sk = (np.abs(Jk))**2
     return Jk, Sk
 
@@ -108,15 +108,11 @@ class MultiTaper_Periodogram:
         self.K = K
         self.nfft = nfft
         self.detrend = detrend
-        self.eigenvalue = None
         self.k_DPSS = None
         self.f = None
         self.fs = None
         self.mt_psd = None
         self.re_psd = None
-        self.re_psd_sline = None
-        self.re_psd_sback = None
-
 
 
     def MT_Spec(self, data: np.ndarray, fs:float):
@@ -141,9 +137,9 @@ class MultiTaper_Periodogram:
         self.data = np.asarray(data)
         self.fs = fs
         
-        npts = len(data)
+        self.N = len(data)
         # DPSS テーパーの生成 (shape: (K, N))
-        self.k_DPSS, self.eigenvalues, self.K = dpss(npts, self.NW, self.K)
+        self.k_DPSS, self.eigenvalues, self.K = dpss(self.N, self.NW, self.K)
 
         # detrend
         self.data = detrend(data,self.detrend)
@@ -152,7 +148,7 @@ class MultiTaper_Periodogram:
         if self.nfft is None:
             self.nfft = len(data)
 
-        self.Jk, k_psd = eigenspec(self.data, self.k_DPSS, self.nfft) # (K, nfft)
+        self.Jk, k_psd = eigen_psd(self.data, self.k_DPSS, self.fs ,self.nfft) # (K, nfft)
         mt_psd = np.mean(k_psd, axis=0)
         f = np.fft.fftfreq(self.nfft, d=1/self.fs)
 
@@ -169,8 +165,9 @@ class MultiTaper_Periodogram:
 
 
     def Harmonic_Ftest(self, p_level):
-        # complex_asd_list < yk
+        # Jk < yk
         # Vn < DPSS
+        #Vn0
 
         npts  = np.shape(self.k_DPSS)[1]    # DPSSターパーの長さ (サンプル数)
         kspec = np.shape(self.k_DPSS)[0]    # DPSSターパーの本数
@@ -178,19 +175,17 @@ class MultiTaper_Periodogram:
         C    = np.zeros(self.nfft, dtype=complex)
         F     = np.zeros(self.nfft)
         p     = np.zeros(self.nfft)
-
         dof1 = 2
         dof2 = 2 * (kspec - 1)
 
         #各テーパーにおけるH_k(0)の算出
-        H_k0 = np.sum(self.k_DPSS, axis=1)  #shape: (k,)
+        H_k0 = (1/self.fs)*np.sum(self.k_DPSS, axis=1)  #shape: (k,)
         H_k0[1::2] = 0  # 奇関数の和は0にする
 
-         # 各周波数における回帰係数 C/sqrt(dt) の算出
-        H_k0_2sum = np.sum(H_k0**2)
-
-        Jk_Hk0 = np.sum(self.Jk * H_k0[:, np.newaxis], axis=0)
-        C = np.sqrt(1 / self.fs) * Jk_Hk0 / H_k0_2sum
+         # 各周波数における回帰係数 C の算出
+        H_k0_2sum = np.sum(H_k0**2) 
+        Jk_Hk0 = np.sum(self.Jk * H_k0[:, np.newaxis], axis=0) #shape (nfft,)
+        C = np.sqrt(1 / self.fs) * Jk_Hk0 / H_k0_2sum #shape(nfft,)
 
 
         # F統計量  
@@ -207,28 +202,81 @@ class MultiTaper_Periodogram:
         p = stats.f.cdf(F, dof1, dof2)  # shape: (nfft,)
         p = p[:self.nfft // 2]
 
-        self.F = F[:,np.newaxis]
-        # self.p = p[:,np.newaxis]
+        self.F_stat = np.zeros((2, self.nfft // 2), dtype=float) #(2,nfft)
+        self.F_stat[0,:] = F
+        self.F_stat[1,:] = p
+
         self.F_crit = stats.f.ppf(1 - p_level, dof1, dof2)
-
-        # スペクトル再構成
-        sline = np.zeros( (self.nfft,1), dtype=float)
-        JK =  np.zeros( (kspec, self.nfft), dtype=complex)
-
 
         # 有意な周波数を取得
         p[p < (1-p_level)] = 0
-
         local_maxima = signal.argrelextrema(p, np.greater)[0]  # 局所最大値のインデックスを取得
 
-        # 局所最大値でないものをゼロにする
-        filtered_p = np.zeros_like(p)
-        filtered_p[local_maxima] = p[local_maxima]
-
-        # ピークの数をカウント
         nl = len(local_maxima)
+        
+        # スペクトル再構成
+        self.re_psd = np.zeros((3,self.nfft // 2), dtype=float)
 
-        # if (nl == 0): 
-            # return seJk, sline
+        if (nl == 0):
+            self.re_k_psd = self.k_psd
+            self.re_psd[0,:] = self.mt_psd
+            self.re_psd[1,:] = self.mt_psd
+            self.re_psd[2,:] = sline[:self.nfft // 2]
 
-        return None
+
+            return None
+        
+        else:
+            # 局所最大値でないものをゼロに
+            filtered_p = np.zeros_like(p)
+            filtered_p[local_maxima] = p[local_maxima]
+
+            #検定結果より優位な線スペクトルのみ残す
+            C_test = np.zeros_like(C)
+            C_test[local_maxima] = C[local_maxima] #shape: (nfft,)
+
+            #スペクトルの再構成 H_k(f-f1) ただし(f1-W<f<F1+W )
+            H_k = (1/self.fs)*np.fft.fft(self.k_DPSS, n=self.nfft, axis=1) #shape(k,nfft)
+            freqs = np.fft.fftfreq(self.nfft, d=1/self.fs)  # shape (nfft,)
+            H_k[:, np.abs(freqs) >= self.NW / self.N * self.fs] = 0
+            H_k = np.fft.fftshift(H_k)
+            Jk_hat = np.zeros_like(H_k)  # shape:(k, nfft)
+            # for i in range(nl):
+            #     shift = local_maxima[i] - self.nfft // 2
+            #     H_k_shifted = np.roll(H_k, shift, axis=1)  # シフト処理
+            #     if shift > 0:
+            #         H_k_shifted[:, :shift] = 0  # 左側（先頭）の欠損部分をゼロ埋め
+            #     elif shift < 0:
+            #         H_k_shifted[:, shift + self.nfft:] = 0  # 右側（末尾）の欠損部分をゼロ埋め
+            #     Jk_hat = Jk_hat + C[local_maxima[i]] * H_k_shifted 
+            shifts = local_maxima - self.nfft // 2  # 各シフト量を配列で計算
+            H_k_shifted = np.zeros_like(H_k)  # ゼロ埋めされた新しい配列を作成
+
+            for i, shift in enumerate(shifts):
+                if shift > 0:
+                    H_k_shifted[:, shift:] = H_k[:, :-shift]  # シフト操作（ゼロ埋め不要）
+                elif shift < 0:
+                    H_k_shifted[:, :shift] = H_k[:, -shift:]  # シフト操作（ゼロ埋め不要）
+                else:
+                    H_k_shifted = H_k.copy()  # シフトなし
+
+                Jk_hat += C[local_maxima[i]] * H_k_shifted  # ブロードキャストで計算
+
+            Jk_hat = np.fft.ifftshift(Jk_hat)
+            back_Jk = self.Jk - Jk_hat/np.sqrt(1/self.fs)
+
+            k_psd_back = (np.abs(back_Jk))**2 #shape: (k,nfft)
+            re_mt_psd_back = np.mean(k_psd_back, axis=0)  #shape:(nfft,)
+            sline = (np.abs(C_test))**2 #shape:(nfft,)
+            re_mt_psd = sline + re_mt_psd_back #shape:(nfft,)
+
+
+            self.k_psd_back = k_psd_back[:,:self.nfft // 2]
+            self.re_psd[0,:] = re_mt_psd_back[:self.nfft // 2]  
+            self.re_psd[1,:] = re_mt_psd[:self.nfft // 2] 
+            self.re_psd[2,:] = sline[:self.nfft // 2] 
+
+            self.k_psd_back[:, 1:-1] *= 2  
+            self.re_psd[:,1:-1] *= 2  
+ 
+            return None
