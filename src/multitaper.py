@@ -181,7 +181,6 @@ class MultiTaper_Periodogram:
         # 各テーパーにおけるH_k(0)の算出
         H_k0 = (1/self.fs)*np.sum(self.k_DPSS, axis=1)  #shape: (k,)
         H_k0[1::2] = 0  # 奇関数の和は0にする
-        print(f"H_k(0):{H_k0}")
 
         # 各周波数における回帰係数 C の算出
         H_k0_2sum = np.sum(H_k0**2) 
@@ -254,5 +253,4 @@ class MultiTaper_Periodogram:
             self.k_psd_back[:, 1:-1] *= 2  
             self.re_psd[:,1:-1] *= 2 
 
- 
             return None
