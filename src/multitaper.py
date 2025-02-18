@@ -231,9 +231,6 @@ class MultiTaper_Periodogram:
 
             #スペクトルの再構成 H_k(f-f1) ただし(f1-W<f<F1+W )
             H_k = (1/self.fs)*np.fft.fft(self.k_DPSS, n=self.nfft, axis=1) #shape(k,nfft)
-            freqs = np.fft.fftfreq(self.nfft, d=1/self.fs)  # shape (nfft,)
-            # H_k[:, np.abs(freqs) >= self.NW / self.N * self.fs] = 0
-
             back_Jk = np.copy(self.Jk)
             for s in range(nl):
                 i = local_maxima[s]  # ピーク位置
