@@ -172,28 +172,29 @@ class MultiTaper_Periodogram:
         npts  = np.shape(self.k_DPSS)[1]    # DPSSターパーの長さ (サンプル数)
         kspec = np.shape(self.k_DPSS)[0]    # DPSSターパーの本数
 
-        C    = np.zeros(self.nfft, dtype=complex)
+        C    = np.zeros(self.nfft)
         F     = np.zeros(self.nfft)
         p     = np.zeros(self.nfft)
         dof1 = 2
         dof2 = 2 * (kspec - 1)
 
-        #各テーパーにおけるH_k(0)の算出
+        # 各テーパーにおけるH_k(0)の算出
         H_k0 = (1/self.fs)*np.sum(self.k_DPSS, axis=1)  #shape: (k,)
         H_k0[1::2] = 0  # 奇関数の和は0にする
+        print(f"H_k(0):{H_k0}")
 
-         # 各周波数における回帰係数 C の算出
+        # 各周波数における回帰係数 C の算出
         H_k0_2sum = np.sum(H_k0**2) 
         Jk_Hk0 = np.sum(self.Jk * H_k0[:, np.newaxis], axis=0) #shape (nfft,)
         C = np.sqrt(1 / self.fs) * Jk_Hk0 / H_k0_2sum #shape(nfft,)
 
-
         # F統計量  
         # 分子（Fup）の計算
-        Fup = float(kspec - 1) * np.abs(C) ** 2 * H_k0_2sum  # shape: (nfft,)
+        Fup = float(kspec - 1)* H_k0_2sum  * np.abs(C) ** 2  # shape: (nfft,)
 
         # 残差の計算（Fdw）
-        Fdw = (1/self.fs)*np.sum(np.abs(self.Jk - (C * H_k0[:, np.newaxis]) / np.sqrt(1/self.fs))**2, axis=0)  # shape: (nfft,)
+        Jk_hat_1 = (C * H_k0[:, np.newaxis]) / np.sqrt(1/self.fs)
+        Fdw = (1/self.fs)*np.sum(np.abs(self.Jk - Jk_hat_1 )**2, axis=0)  # shape: (nfft,)
 
         # F値の計算
         F = Fup / Fdw  # shape: (nfft,)
@@ -222,15 +223,9 @@ class MultiTaper_Periodogram:
             self.re_psd[0,:] = self.mt_psd
             self.re_psd[1,:] = self.mt_psd
             self.re_psd[2,:] = sline[:self.nfft // 2]
-
-
             return None
         
         else:
-            # 局所最大値でないものをゼロに
-            filtered_p = np.zeros_like(p)
-            filtered_p[local_maxima] = p[local_maxima]
-
             #検定結果より優位な線スペクトルのみ残す
             C_test = np.zeros_like(C)
             C_test[local_maxima] = C[local_maxima] #shape: (nfft,)
@@ -238,38 +233,18 @@ class MultiTaper_Periodogram:
             #スペクトルの再構成 H_k(f-f1) ただし(f1-W<f<F1+W )
             H_k = (1/self.fs)*np.fft.fft(self.k_DPSS, n=self.nfft, axis=1) #shape(k,nfft)
             freqs = np.fft.fftfreq(self.nfft, d=1/self.fs)  # shape (nfft,)
-            H_k[:, np.abs(freqs) >= self.NW / self.N * self.fs] = 0
-            H_k = np.fft.fftshift(H_k)
-            Jk_hat = np.zeros_like(H_k)  # shape:(k, nfft)
-            # for i in range(nl):
-            #     shift = local_maxima[i] - self.nfft // 2
-            #     H_k_shifted = np.roll(H_k, shift, axis=1)  # シフト処理
-            #     if shift > 0:
-            #         H_k_shifted[:, :shift] = 0  # 左側（先頭）の欠損部分をゼロ埋め
-            #     elif shift < 0:
-            #         H_k_shifted[:, shift + self.nfft:] = 0  # 右側（末尾）の欠損部分をゼロ埋め
-            #     Jk_hat = Jk_hat + C[local_maxima[i]] * H_k_shifted 
-            shifts = local_maxima - self.nfft // 2  # 各シフト量を配列で計算
-            H_k_shifted = np.zeros_like(H_k)  # ゼロ埋めされた新しい配列を作成
+            # H_k[:, np.abs(freqs) >= self.NW / self.N * self.fs] = 0
 
-            for i, shift in enumerate(shifts):
-                if shift > 0:
-                    H_k_shifted[:, shift:] = H_k[:, :-shift]  # シフト操作（ゼロ埋め不要）
-                elif shift < 0:
-                    H_k_shifted[:, :shift] = H_k[:, -shift:]  # シフト操作（ゼロ埋め不要）
-                else:
-                    H_k_shifted = H_k.copy()  # シフトなし
-
-                Jk_hat += C[local_maxima[i]] * H_k_shifted  # ブロードキャストで計算
-
-            Jk_hat = np.fft.ifftshift(Jk_hat)
-            back_Jk = self.Jk - Jk_hat/np.sqrt(1/self.fs)
-
+            back_Jk = np.copy(self.Jk)
+            for s in range(nl):
+                i = local_maxima[s]  # ピーク位置
+                jj = (np.arange(self.nfft) - i) % self.nfft  # ベクトル化（負の値を補正） (nfft,)
+                back_Jk = back_Jk - C[i] * H_k[:, jj] / np.sqrt(1/self.fs) # ループなしでブロードキャスト計算
+  
             k_psd_back = (np.abs(back_Jk))**2 #shape: (k,nfft)
             re_mt_psd_back = np.mean(k_psd_back, axis=0)  #shape:(nfft,)
-            sline = (np.abs(C_test))**2 #shape:(nfft,)
+            sline = np.abs(C_test)**2
             re_mt_psd = sline + re_mt_psd_back #shape:(nfft,)
-
 
             self.k_psd_back = k_psd_back[:,:self.nfft // 2]
             self.re_psd[0,:] = re_mt_psd_back[:self.nfft // 2]  
@@ -277,6 +252,7 @@ class MultiTaper_Periodogram:
             self.re_psd[2,:] = sline[:self.nfft // 2] 
 
             self.k_psd_back[:, 1:-1] *= 2  
-            self.re_psd[:,1:-1] *= 2  
+            self.re_psd[:,1:-1] *= 2 
+
  
             return None
