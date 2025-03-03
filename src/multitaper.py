@@ -210,7 +210,7 @@ class MultiTaper_Periodogram:
 
         # 有意な周波数を取得
         p[p < (1-p_level)] = 0
-        local_maxima = signal.argrelextrema(p, np.greater)[0]  # 局所最大値のインデックスを取得
+        local_maxima, _ = signal.find_peaks(p, plateau_size=1)
 
         nl = len(local_maxima)
         
