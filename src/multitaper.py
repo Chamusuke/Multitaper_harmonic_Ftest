@@ -221,6 +221,8 @@ class MultiTaper_Periodogram:
             self.re_k_psd = self.k_psd
             self.re_psd[0,:] = self.mt_psd
             self.re_psd[1,:] = self.mt_psd
+            sline = np.zeros_like(C)
+            sline = np.abs(sline)**2
             self.re_psd[2,:] = sline[:self.nfft // 2]
             return None
         
