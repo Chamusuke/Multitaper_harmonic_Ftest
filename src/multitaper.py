@@ -106,9 +106,9 @@ def eigen_psd(data, k_DPSS, fs, nfft):
     各テーパーごとの固有周波数スペクトル及び固有パワースペクトル
     """
     tapered_data = k_DPSS * data[np.newaxis, :]  # shape: (K, N)
-    Jk = np.fft.fft(tapered_data, n=nfft, axis=1)  # ← √(1/fs) を外す
-    Sk = np.abs(Jk)**2
-    return Jk, Sk
+    Jk = np.fft.fft(tapered_data, n=nfft, axis=1) / np.sqrt(fs) 
+    Smt_k = np.abs(Jk)**2 
+    return Jk, Smt_k
 
 
 
@@ -123,6 +123,7 @@ class MultiTaper_Periodogram:
         K: int = None,
         nfft: int = None,
         detrend: str = 'constant',
+        p_level:float = 0.05
     ):
         """
         Parameters
@@ -136,11 +137,6 @@ class MultiTaper_Periodogram:
         nfft : int, optional
             FFT のサンプル数 (Point od FFT))
             データ長 以下なら信号の一部分で解析 以上なら0うめにより滑らかに
-        scaling : {'density', 'spectrum'}, optional
-            - 'density' : パワースペクトル密度 (PSD) [V^2/Hz]
-            - 'spectrum': パワースペクトル [V^2]
-        return_onesided : bool, optional
-            True なら片側スペクトルを返す   positive frequency
         detrend :  { 'linear', 'constant' }, None optional
             除去するトレンドの種類
                 'linear' (デフォルト): 一次の直線を最小二乗フィットして、それを引き算
@@ -152,18 +148,13 @@ class MultiTaper_Periodogram:
         self.K = K
         self.nfft = nfft
         self.detrend = detrend
-        self.k_DPSS = None
-        self.f = None
-        self.fs = None
-        self.mt_psd = None
-        self.re_psd = None
+
 
 
     def MT_Spec(self, data: np.ndarray, fs:float):
         """
         与えられた時系列データ x に対して、
-        マルチターパー (DPSS) 法で PSD を推定する。
-        We can estimate PSD using Multitaper and DPSS
+        マルチテーパー (DPSS) 法で PSD を推定する。
 
         Parameters
         ----------
@@ -192,18 +183,25 @@ class MultiTaper_Periodogram:
         if self.nfft is None:
             self.nfft = len(data)
 
-        self.Jk, k_psd = eigen_psd(self.data, self.k_DPSS, self.fs ,self.nfft) # (K, nfft)
-        mt_psd = np.mean(k_psd, axis=0)
-        f = np.fft.fftfreq(self.nfft, d=1/self.fs)
+        self.Jk, self.Smt_k = eigen_psd(self.data, self.k_DPSS, self.fs ,self.nfft) # (K, nfft)
+        self.f = np.fft.fftfreq(self.nfft, d=1/self.fs)
+        self.Smt = np.mean(self.Smt_k, axis=0)
 
-        # 片側スペクトル(dc,ナイキストは除いて補正)
-        self.k_psd = k_psd[:,:self.nfft // 2]
-        self.mt_psd = mt_psd[:self.nfft // 2]
+        # 周波数軸とスペクトル化の場合分け
+        if np.iscomplexobj(self.data):
+            # 複素信号 → 両側スペクトル
+            self.f = np.fft.fftfreq(self.nfft, d=1/self.fs)   # 両側周波数軸
+            nfreq = len(self.f)
+            self.Smt_k = self.Smt_k[:, :nfreq]
+            self.Smt = np.mean(self.Smt_k, axis=0)
+        else:
+            # 実信号 → 片側スペクトル
+            self.f = np.fft.rfftfreq(self.nfft, d=1/self.fs)  # 片側周波数軸
+            nfreq = len(self.f)
+            self.Smt_k = self.Smt_k[:, :nfreq]
+            self.Smt = np.mean(self.Smt_k, axis=0)
 
-        self.k_psd[:, 1:-1] *= 2  
-        self.mt_psd[1:-1] *= 2    
-
-        self.f = f[:self.nfft // 2]
+        print("self.k_DPS, self.eigenvalues,self.Jk, self.Smt_k, self.Smt, f")
 
         return None
 
