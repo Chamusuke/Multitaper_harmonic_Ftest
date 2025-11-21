@@ -1,7 +1,7 @@
 from setuptools import setup, find_packages
 
 setup(
-    name='Multitaper and Harmonic F-test',
+    name='Multitaper_and_Ftest',
     version='0.1.0',
     description='A Spectrum Analysis package using multitaper and harmonic F-test',
     author='Chamusuke',

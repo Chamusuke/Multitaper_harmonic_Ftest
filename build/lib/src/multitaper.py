@@ -7,53 +7,6 @@ from scipy import signal,stats
 from scipy.signal import periodogram, windows
 
 
-def get_data(fname):
-    """
-    Utility function to download the data from the Zenodo repository
-    with the direct URL path (fixed). 
-    
-    **Parameters**
-    
-    fname : char
-        filename of the data to download
-    
-    **Returns**
-    
-    data : ndarray
-        numpy array with the downloaded data
-        In case of error, data = 0 is returned
-
-    |
-
-    """
-    
-    if (fname.find("v22")>-1):
-        url = 'https://zenodo.org/record/6025794/files/v22_174_series.dat?download=1'
-    elif (fname.find("hhe.dat")>-1):
-        url = 'https://zenodo.org/record/6025794/files/sgc_vmm_hhe.dat?download=1'
-    elif (fname.find("sgc_vmm.dat")>-1):
-        url = 'https://zenodo.org/record/6025794/files/sgc_vmm.dat?download=1'
-    elif (fname.find("sgc_surf")>-1):
-        url = 'https://zenodo.org/record/6025794/files/sgc_surf.dat?download=1'
-    elif (fname.find("sgc_mesetas")>-1):
-        url = 'https://zenodo.org/record/6025794/files/sgc_mesetas.dat?download=1'
-    elif (fname.find("PASC")>-1):
-        url = 'https://zenodo.org/record/6025794/files/PASC.dat?download=1'
-    elif (fname.find("_src")>-1):
-        url = 'https://zenodo.org/record/6025794/files/mesetas_src.dat?download=1'
-    elif (fname.find("crisanto")>-1):
-        url = 'https://zenodo.org/record/6025794/files/crisanto_mesetas.dat?download=1'
-    elif (fname.find("akima")>-1):
-        url = 'https://zenodo.org/record/6025794/files/asc_akima.dat?download=1'
-    elif (fname.find("ADO")>-1):
-        url = 'https://zenodo.org/record/6025794/files/ADO.dat?download=1'
-    else:
-        data = -1
-        
-    data = np.loadtxt(url)
-    
-    return data
-
 def detrend(data, option = 'constant'):
     if option == 'constant':
         output = (data - np.mean(data))
@@ -92,6 +45,7 @@ def dpss(npts, nw, k=None):
         k = int(2*nw-1)
            
     k_DPSS, eigenvalues = windows.dpss(npts, nw, Kmax=k, sym=False, norm=2, return_ratios=True)
+
     if k >= 2 * nw:
         valid_indices = np.where(eigenvalues >= 0.90)[0]
         k_DPSS = k_DPSS[valid_indices]
@@ -188,7 +142,7 @@ class MultiTaper_Periodogram:
         self.k_DPSS, self.eigenvalues, self.K = dpss(self.N, self.NW, self.K)
 
         # detrend
-        # self.data = detrend(data,self.detrend)
+        self.data = detrend(data,self.detrend)
 
         # MT法によるスペクトル推定
         if self.nfft is None:
@@ -283,7 +237,7 @@ class MultiTaper_Periodogram:
             for s in range(nl):
                 i = local_maxima[s]  # ピーク位置
                 jj = (np.arange(self.nfft) - i) % self.nfft  # ベクトル化（負の値を補正） (nfft,)
-                back_Jk = back_Jk - C_test[i] * H_k[:, jj] / np.sqrt(1/self.fs) # ループなしでブロードキャスト計算
+                back_Jk = back_Jk - C[i] * H_k[:, jj] / np.sqrt(1/self.fs) # ループなしでブロードキャスト計算
   
             k_psd_back = (np.abs(back_Jk))**2 #shape: (k,nfft)
             re_mt_psd_back = np.mean(k_psd_back, axis=0)  #shape:(nfft,)
@@ -291,7 +245,6 @@ class MultiTaper_Periodogram:
             re_mt_psd = sline + re_mt_psd_back #shape:(nfft,)
 
             self.k_psd_back = k_psd_back[:,:self.nfft // 2]
-
             self.re_psd[0,:] = re_mt_psd_back[:self.nfft // 2]  
             self.re_psd[1,:] = re_mt_psd[:self.nfft // 2] 
             self.re_psd[2,:] = sline[:self.nfft // 2] 

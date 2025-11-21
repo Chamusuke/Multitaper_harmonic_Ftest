@@ -1,0 +1,12 @@
+Metadata-Version: 2.2
+Name: Multitaper_and_Ftest
+Version: 0.1.0
+Summary: A Spectrum Analysis package using multitaper and harmonic F-test
+Home-page: https://github.com/Chamusuke/Multitaper_harmonic_Ftest.git
+Author: Chamusuke
+Requires-Python: >=3.11
+License-File: LICENSE
+Dynamic: author
+Dynamic: home-page
+Dynamic: requires-python
+Dynamic: summary
