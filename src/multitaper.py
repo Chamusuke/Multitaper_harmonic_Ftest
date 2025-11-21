@@ -104,14 +104,12 @@ def dpss(npts, nw, k=None):
 def eigen_psd(data, k_DPSS, fs, nfft):
     """
     各テーパーごとの固有周波数スペクトル及び固有パワースペクトル
-    (Eigen Spectrum and PSD of each DPSS)
-    Jk : 固有周波数スペクトル密度 (Eigen Spectrum)
-    Sk : 固有パワースペクトル密度 (Eigen PSD)
     """
     tapered_data = k_DPSS * data[np.newaxis, :]  # shape: (K, N)
-    Jk = np.sqrt(1/fs)*np.fft.fft(tapered_data, n=nfft, axis=1)  # shape: (K, nfft)
-    Sk = (np.abs(Jk))**2
+    Jk = np.fft.fft(tapered_data, n=nfft, axis=1)  # ← √(1/fs) を外す
+    Sk = np.abs(Jk)**2
     return Jk, Sk
+
 
 
 class MultiTaper_Periodogram:
@@ -188,7 +186,7 @@ class MultiTaper_Periodogram:
         self.k_DPSS, self.eigenvalues, self.K = dpss(self.N, self.NW, self.K)
 
         # detrend
-        # self.data = detrend(data,self.detrend)
+        self.data = detrend(data,self.detrend)
 
         # MT法によるスペクトル推定
         if self.nfft is None:
