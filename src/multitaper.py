@@ -176,8 +176,8 @@ class MultiTaper_Periodogram:
         # DPSS テーパーの生成 (shape: (K, N))
         self.k_DPSS, self.eigenvalues, self.K = dpss(self.N, self.NW, self.K)
 
-        # detrend
-        self.data = detrend(data,self.detrend)
+        # # detrend
+        # self.data = detrend(data,self.detrend)
 
         # MT法によるスペクトル推定
         if self.nfft is None:
@@ -212,13 +212,13 @@ class MultiTaper_Periodogram:
         #Vn0
 
         npts  = np.shape(self.k_DPSS)[1]    # DPSSターパーの長さ (サンプル数)
-        kspec = np.shape(self.k_DPSS)[0]    # DPSSターパーの本数
+        K = np.shape(self.k_DPSS)[0]    # DPSSターパーの本数
 
         C    = np.zeros(self.nfft)
         F     = np.zeros(self.nfft)
         p     = np.zeros(self.nfft)
         dof1 = 2
-        dof2 = 2 * (kspec - 1)
+        dof2 = 2 * (K - 1)
 
         # 各テーパーにおけるH_k(0)の算出
         H_k0 = (1/self.fs)*np.sum(self.k_DPSS, axis=1)  #shape: (k,)
@@ -231,7 +231,7 @@ class MultiTaper_Periodogram:
 
         # F統計量  
         # 分子（Fup）の計算
-        Fup = float(kspec - 1)* H_k0_2sum  * np.abs(C) ** 2  # shape: (nfft,)
+        Fup = float(K - 1)* H_k0_2sum  * np.abs(C) ** 2  # shape: (nfft,)
 
         # 残差の計算（Fdw）
         Jk_hat_1 = (C * H_k0[:, np.newaxis]) / np.sqrt(1/self.fs)
@@ -239,12 +239,14 @@ class MultiTaper_Periodogram:
 
         # F値の計算
         F = Fup / Fdw  # shape: (nfft,)
-        F = F[:self.nfft // 2]
         # p値の計算
         p = stats.f.cdf(F, dof1, dof2)  # shape: (nfft,)
-        p = p[:self.nfft // 2]
 
-        self.F_stat = np.zeros((2, self.nfft // 2), dtype=float) #(2,nfft)
+        nfreq = len(self.f)
+        F = F[:nfreq]
+        p = p[:nfreq]
+
+        self.F_stat = np.zeros((2, nfreq))
         self.F_stat[0,:] = F
         self.F_stat[1,:] = p
 
