@@ -129,7 +129,7 @@ def eigen_psd(data, k_DPSS, fs, nfft):
     各テーパーごとの固有周波数スペクトル及び固有パワースペクトル
     """
     tapered_data = k_DPSS * data[np.newaxis, :]  # shape: (K, N)
-    Jk = np.fft.fft(tapered_data, n=nfft, axis=1) / np.sqrt(fs) 
+    Jk = np.fft.fft(tapered_data, n=nfft, axis=1) * np.sqrt(1/fs) 
     Smt_k = np.abs(Jk)**2
     return Jk, Smt_k
 
@@ -200,7 +200,7 @@ class MultiTaper_Periodogram:
         self.k_DPSS, self.eigenvalues, self.K = dpss(self.N, self.NW, self.K)
 
         # # detrend
-        # self.data = detrend(data,self.detrend)
+        self.data = detrend(data,self.detrend)
 
         # MT法によるスペクトル推定
         if self.nfft is None:
@@ -241,6 +241,10 @@ class MultiTaper_Periodogram:
 
         npts  = np.shape(self.k_DPSS)[1]    # DPSSターパーの長さ
         kspec = np.shape(self.k_DPSS)[0]    # DPSSターパーの本数
+        # W_bin の計算例
+        df = self.fs / self.nfft   # 周波数分解能
+        W_hz = (self.NW * self.fs) / npts
+        W_bin = int(W_hz / df)
 
         dof1 = 2
         dof2 = 2 * (kspec - 1)
@@ -273,6 +277,8 @@ class MultiTaper_Periodogram:
         self.F_stat[1, :] = p
 
         self.F_crit = stats.f.ppf(1 - p_level, dof1, dof2)
+        self.F_999 = stats.f.ppf(0.999, dof1, dof2)
+        self.F_99 = stats.f.ppf(0.99 - p_level, dof1, dof2)
 
         # 有意な周波数を取得
         p_masked = np.where(p > (1 - p_level), p, 0.0)
@@ -295,122 +301,35 @@ class MultiTaper_Periodogram:
 
             H_k = (1/self.fs) * np.fft.fft(self.k_DPSS, n=self.nfft, axis=1)
             back_Jk = np.copy(self.Jk)
+
             for i in local_maxima:
-                jj = (np.arange(self.nfft) - i) % self.nfft
-                back_Jk -= C[i] * H_k[:, jj] / np.sqrt(1/self.fs)
+                f_start = max(i - W_bin, 0)
+                f_end   = min(i + W_bin + 1, self.nfft)
+                f_band = np.arange(f_start, f_end)
+                # H_k(f - f1) をバンド内で評価
+                jj = (f_band - i) % self.nfft
+                back_Jk[:, f_band] -= (C[i] / np.sqrt(1/self.fs)) * H_k[:, jj]
+
 
             k_psd_back = (np.abs(back_Jk))**2
             re_mt_psd_back = np.mean(k_psd_back, axis=0)
-            sline = np.abs(C_test)**2
-            re_mt_psd = re_mt_psd_back + sline
 
+            # 線成分の再構成：各ピークの近傍のみ
+            S_line = np.zeros(self.nfft, dtype=float)
+            for i in local_maxima:
+                f_start = max(i - W_bin, 0)
+                f_end   = min(i + W_bin + 1, self.nfft)
+                f_band = np.arange(f_start, f_end)
+                jj = (f_band - i) % self.nfft
+                # |C|^2 * mean(|H_k|^2) / Δt を近傍にだけ加算
+                S_line[f_band] += (np.abs(C_test[i])**2) * np.mean(np.abs(H_k[:, jj])**2, axis=0) / (1/self.fs)
+
+            # 合成
+            re_mt_psd = re_mt_psd_back + S_line
+
+            # 出力に切り出し
             self.k_psd_back = k_psd_back[:, :nfreq]
             self.re_psd[0, :] = re_mt_psd_back[:nfreq]
             self.re_psd[1, :] = re_mt_psd[:nfreq]
-            self.re_psd[2, :] = sline[:nfreq]
+            self.re_psd[2, :] = S_line[:nfreq]
 
-        # 実信号の場合は片側スペクトルに補正
-        if (not np.iscomplexobj(self.data)) and nfreq > 2:
-            self.k_psd_back[:, 1:-1] *= 2
-            self.re_psd[:, 1:-1] *= 2
-            self.F_stat = self.F_stat[:, :nfreq]  # F値とp値も片側に切り出し
-            # self.p = self.p[:, :nfreq]  # F値とp値も片側に切り出し
-
-        return None
-
-
-
-
-    # def Harmonic_Ftest(self, p_level):
-    #     # Jk < yk
-    #     # Vn < DPSS
-    #     #Vn0
-
-    #     npts  = np.shape(self.k_DPSS)[1]    # DPSSターパーの長さ (サンプル数)
-    #     kspec = np.shape(self.k_DPSS)[0]    # DPSSターパーの本数
-
-    #     C    = np.zeros(self.nfft)
-    #     F     = np.zeros(self.nfft)
-    #     p     = np.zeros(self.nfft)
-    #     dof1 = 2
-    #     dof2 = 2 * (kspec - 1)
-
-    #     # 各テーパーにおけるH_k(0)の算出
-    #     H_k0 = (1/self.fs)*np.sum(self.k_DPSS, axis=1)  #shape: (k,)
-    #     H_k0[1::2] = 0  # 奇関数の和は0にする
-
-    #     # 各周波数における回帰係数 C の算出
-    #     H_k0_2sum = np.sum(H_k0**2) 
-    #     Jk_Hk0 = np.sum(self.Jk * H_k0[:, np.newaxis], axis=0) #shape (nfft,)
-    #     C = np.sqrt(1 / self.fs) * Jk_Hk0 / H_k0_2sum #shape(nfft,)
-
-    #     # F統計量  
-    #     # 分子（Fup）の計算
-    #     Fup = float(kspec - 1)* H_k0_2sum  * np.abs(C) ** 2  # shape: (nfft,)
-
-    #     # 残差の計算（Fdw）
-    #     Jk_hat_1 = (C * H_k0[:, np.newaxis]) / np.sqrt(1/self.fs)
-    #     Fdw = (1/self.fs)*np.sum(np.abs(self.Jk - Jk_hat_1 )**2, axis=0)  # shape: (nfft,)
-
-    #     # F値の計算
-    #     F = Fup / Fdw  # shape: (nfft,)
-    #     F = F[:self.nfft // 2+1]
-    #     # p値の計算
-    #     p = stats.f.cdf(F, dof1, dof2)  # shape: (nfft,)
-    #     p = p[:self.nfft // 2+1]
-
-    #     self.F_stat = np.zeros((2, self.nfft // 2), dtype=float) #(2,nfft)
-    #     self.F_stat[0,:] = F
-    #     self.F_stat[1,:] = p
-
-    #     self.F_crit = stats.f.ppf(1 - p_level, dof1, dof2)
-
-    #     # 有意な周波数を取得
-    #     p[p < (1-p_level)] = 0
-    #     local_maxima, _ = signal.find_peaks(p, plateau_size=1)
-
-    #     nl = len(local_maxima)
-        
-    #     # スペクトル再構成
-    #     self.re_psd = np.zeros((3,self.nfft // 2), dtype=float)
-
-    #     if (nl == 0):
-    #         self.re_k_psd = self.k_psd
-    #         self.re_psd[0,:] = self.mt_psd
-    #         self.re_psd[1,:] = self.mt_psd
-    #         sline = np.zeros_like(C)
-    #         sline = np.abs(sline)**2
-    #         self.re_psd[2,:] = sline[:self.nfft // 2]
-    #         return None
-        
-    #     else:
-    #         # 検定結果より優位な線スペクトルのみ残す
-    #         C_test = np.zeros_like(C)
-    #         C_test[local_maxima] = C[local_maxima]  # shape: (nfft,)
-
-    #         # スペクトルの再構成 H_k(f-f1)
-    #         H_k = (1/self.fs) * np.fft.fft(self.k_DPSS, n=self.nfft, axis=1)  # shape(k,nfft)
-    #         back_Jk = np.copy(self.Jk)
-    #         for i in local_maxima:
-    #             jj = (np.arange(self.nfft) - i) % self.nfft
-    #             back_Jk -= C[i] * H_k[:, jj] / np.sqrt(1/self.fs)
-
-    #         k_psd_back = (np.abs(back_Jk))**2
-    #         re_mt_psd_back = np.mean(k_psd_back, axis=0)
-    #         sline = np.abs(C_test)**2
-    #         re_mt_psd = re_mt_psd_back + sline
-
-    #         # 片側／両側に合わせて切り出し
-    #         nfreq = len(self.f)
-    #         self.k_psd_back = k_psd_back[:, :nfreq]
-    #         self.re_psd = np.zeros((3, nfreq), dtype=float)
-    #         self.re_psd[0, :] = re_mt_psd_back[:nfreq]
-    #         self.re_psd[1, :] = re_mt_psd[:nfreq]
-    #         self.re_psd[2, :] = sline[:nfreq]
-
-    #         # 片側補正（実信号のみ、DC/Nyquist除外）
-    #         if (not np.iscomplexobj(self.data)) and nfreq > 2:
-    #             self.k_psd_back[:, 1:-1] *= 2
-    #             self.re_psd[:, 1:-1] *= 2
-
-    #         return None
