@@ -220,8 +220,10 @@ class MultiTaper_Periodogram:
             # 実信号 → 片側スペクトル
             self.f = np.fft.rfftfreq(self.nfft, d=1/self.fs)  # 片側周波数軸
             nfreq = len(self.f)
-            self.Smt_k = self.Smt_k[:, :nfreq]
+            self.Smt_k = self.Smt_k[:, :nfreq] 
             self.Smt = np.mean(self.Smt_k, axis=0)
+            self.Smt_k[1:-1] *= 2  # DCとNyquist以外を2倍
+            self.Smt[1:-1] *= 2  # DCとNyquist以外を2倍
 
         print("self.k_DPS, self.eigenvalues,self.Jk, self.Smt_k, self.Smt, f")
 
@@ -332,4 +334,7 @@ class MultiTaper_Periodogram:
             self.re_psd[0, :] = re_mt_psd_back[:nfreq]
             self.re_psd[1, :] = re_mt_psd[:nfreq]
             self.re_psd[2, :] = S_line[:nfreq]
-
+            if not np.iscomplexobj(self.data) and nfreq > 2:
+                self.k_psd_back[1:-1] *= 2  
+                self.re_psd[:,1:-1] *= 2 
+            return None
