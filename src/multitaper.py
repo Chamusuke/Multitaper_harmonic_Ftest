@@ -130,7 +130,7 @@ def eigen_psd(data, k_DPSS, fs, nfft):
     """
     tapered_data = k_DPSS * data[np.newaxis, :]  # shape: (K, N)
     Jk = np.fft.fft(tapered_data, n=nfft, axis=1) / np.sqrt(fs) 
-    Smt_k = np.abs(Jk)**2 
+    Smt_k = np.abs(Jk)**2
     return Jk, Smt_k
 
 
@@ -200,12 +200,11 @@ class MultiTaper_Periodogram:
         self.k_DPSS, self.eigenvalues, self.K = dpss(self.N, self.NW, self.K)
 
         # # detrend
-        self.data = detrend(data,self.detrend)
+        # self.data = detrend(data,self.detrend)
 
         # MT法によるスペクトル推定
         if self.nfft is None:
             self.nfft = len(data)
-
         self.Jk, self.Smt_k = eigen_psd(self.data, self.k_DPSS, self.fs ,self.nfft) # (K, nfft)
         self.f = np.fft.fftfreq(self.nfft, d=1/self.fs)
         self.Smt = np.mean(self.Smt_k, axis=0)
