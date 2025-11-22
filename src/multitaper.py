@@ -91,13 +91,36 @@ def dpss(npts, nw, k=None):
     if k is None:
         k = int(2*nw-1)
            
-    k_DPSS, eigenvalues = windows.dpss(npts, nw, Kmax=k, sym=False, norm=2, return_ratios=True)
+    k_DPSS, eigenvalues = windows.dpss(
+        npts, nw, Kmax=k, sym=False, norm=2, return_ratios=True
+    )
+
+    # 固有値フィルタリング
     if k >= 2 * nw:
         valid_indices = np.where(eigenvalues >= 0.90)[0]
         k_DPSS = k_DPSS[valid_indices]
         eigenvalues = eigenvalues[valid_indices]
         k = len(valid_indices)
-        print(f"A unique taper of eigenvalues (0.8<) was selected. K={k}")
+        print(f"A unique taper of eigenvalues (>=0.90) was selected. K={k}")
+
+    # -----------------------------------------------------
+    # 正規化（念のため再確認）
+    # -----------------------------------------------------
+    vnorm = np.sqrt(np.sum(k_DPSS**2, axis=1))  # 各テーパーのL2ノルム
+    k_DPSS = k_DPSS / vnorm[:, None]            # 正規化して単位エネルギーに
+
+    # -----------------------------------------------------
+    # 符号統一（positive-standard）
+    # -----------------------------------------------------
+    nx = npts % 2
+    if nx == 1:
+        lh = (npts + 1) // 2
+    else:
+        lh = npts // 2
+
+    for i in range(k):
+        if k_DPSS[i, lh] < 0.0:
+            k_DPSS[i, :] = -k_DPSS[i, :]
 
     return k_DPSS, eigenvalues, k
 
@@ -177,7 +200,7 @@ class MultiTaper_Periodogram:
         self.k_DPSS, self.eigenvalues, self.K = dpss(self.N, self.NW, self.K)
 
         # # detrend
-        # self.data = detrend(data,self.detrend)
+        self.data = detrend(data,self.detrend)
 
         # MT法によるスペクトル推定
         if self.nfft is None:
@@ -252,49 +275,55 @@ class MultiTaper_Periodogram:
 
         self.F_crit = stats.f.ppf(1 - p_level, dof1, dof2)
 
-        # 有意な周波数を取得
-        p[p < (1-p_level)] = 0
-        local_maxima, _ = signal.find_peaks(p, plateau_size=1)
-
+        # 有意ピークの抽出（CDFが 1 - p_level を超えるものを候補に）
+        significant = p > (1 - p_level)
+        p_masked = np.where(significant, p, 0.0)
+        local_maxima, _ = signal.find_peaks(p_masked, plateau_size=1)
         nl = len(local_maxima)
         
-        # スペクトル再構成
-        self.re_psd = np.zeros((3,self.nfft // 2), dtype=float)
 
-        if (nl == 0):
-            self.re_k_psd = self.k_psd
-            self.re_psd[0,:] = self.mt_psd
-            self.re_psd[1,:] = self.mt_psd
-            sline = np.zeros_like(C)
-            sline = np.abs(sline)**2
-            self.re_psd[2,:] = sline[:self.nfft // 2]
+        # 出力配列（背景 / 合成 / 線）
+        self.re_psd = np.zeros((3, nfreq), dtype=float)
+
+        if nl == 0:
+            # 有意な線スペクトルがない場合は、元のMT-PSDをそのまま返す
+            self.re_psd[0, :] = self.Smt
+            self.re_psd[1, :] = self.Smt
+            self.re_psd[2, :] = np.zeros(nfreq, dtype=float)
+            self.k_psd_back = np.copy(self.Smt_k[:, :nfreq])  # 各テーパー背景PSD（そのまま）
+            # 片側補正（実信号のみ、DC/Nyquist除外）
+            if (not np.iscomplexobj(self.data)) and nfreq > 2:
+                self.k_psd_back[:, 1:-1] *= 2
+                self.re_psd[:, 1:-1] *= 2
             return None
-        
-        else:
-            #検定結果より優位な線スペクトルのみ残す
-            C_test = np.zeros_like(C)
-            C_test[local_maxima] = C[local_maxima] #shape: (nfft,)
 
-            #スペクトルの再構成 H_k(f-f1) ただし(f1-W<f<F1+W )
-            H_k = (1/self.fs)*np.fft.fft(self.k_DPSS, n=self.nfft, axis=1) #shape(k,nfft)
-            back_Jk = np.copy(self.Jk)
-            for s in range(nl):
-                i = local_maxima[s]  # ピーク位置
-                jj = (np.arange(self.nfft) - i) % self.nfft  # ベクトル化（負の値を補正） (nfft,)
-                back_Jk = back_Jk - C_test[i] * H_k[:, jj] / np.sqrt(1/self.fs) # ループなしでブロードキャスト計算
-  
-            k_psd_back = (np.abs(back_Jk))**2 #shape: (k,nfft)
-            re_mt_psd_back = np.mean(k_psd_back, axis=0)  #shape:(nfft,)
-            sline = np.abs(C_test)**2
-            re_mt_psd = sline + re_mt_psd_back #shape:(nfft,)
+        # 線成分のみ残すための C_test
+        C_test = np.zeros_like(C)            # (nfft,)
+        C_test[local_maxima] = C[local_maxima]
 
-            self.k_psd_back = k_psd_back[:,:self.nfft // 2]
+        # DPSS の周波数応答 H_k(f) を用いた再構成（周波数シフトは np.roll で高速化）
+        H_k = (1 / self.fs) * np.fft.fft(self.k_DPSS, n=self.nfft, axis=1)  # (K, nfft)
 
-            self.re_psd[0,:] = re_mt_psd_back[:self.nfft // 2]  
-            self.re_psd[1,:] = re_mt_psd[:self.nfft // 2] 
-            self.re_psd[2,:] = sline[:self.nfft // 2] 
+        back_Jk = np.copy(self.Jk)  # 線成分を除いた固有スペクトルを作る
+        for i in local_maxima:
+            H_k_shifted = np.roll(H_k, -i, axis=1)  # f -> f - f_i
+            back_Jk -= C_test[i] * H_k_shifted / np.sqrt(1 / self.fs)
 
-            self.k_psd_back[:, 1:-1] *= 2  
-            self.re_psd[:,1:-1] *= 2 
+        # 背景PSD（各テーパー）とその平均（MT背景PSD）
+        k_psd_back = (np.abs(back_Jk)**2) / self.fs         # (K, nfft) → PSD正規化
+        re_mt_psd_back = np.mean(k_psd_back, axis=0)        # (nfft,)
+        sline = np.abs(C_test)**2                           # (nfft,) 線成分PSD
+        re_mt_psd = re_mt_psd_back + sline                  # (nfft,) 合成PSD
 
-            return None
+        # 片側/両側に合わせて切り出し
+        self.k_psd_back = k_psd_back[:, :nfreq]
+        self.re_psd[0, :] = re_mt_psd_back[:nfreq]
+        self.re_psd[1, :] = re_mt_psd[:nfreq]
+        self.re_psd[2, :] = sline[:nfreq]
+
+        # 片側補正（実信号のみ、DC/Nyquist除外）
+        if (not np.iscomplexobj(self.data)) and nfreq > 2:
+            self.k_psd_back[:, 1:-1] *= 2
+            self.re_psd[:, 1:-1] *= 2
+
+        return None
