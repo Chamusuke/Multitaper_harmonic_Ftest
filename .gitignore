@@ -3,3 +3,4 @@ Multitaper_and_Ftest.egg-info
 build/
 zenodo.org/
 test_data/
+# example.ipynb/
