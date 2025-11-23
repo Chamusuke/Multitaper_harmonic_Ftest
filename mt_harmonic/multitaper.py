@@ -7,53 +7,6 @@ from scipy import signal,stats
 from scipy.signal import periodogram, windows
 
 
-def get_data(fname):
-    """
-    Utility function to download the data from the Zenodo repository
-    with the direct URL path (fixed). 
-    
-    **Parameters**
-    
-    fname : char
-        filename of the data to download
-    
-    **Returns**
-    
-    data : ndarray
-        numpy array with the downloaded data
-        In case of error, data = 0 is returned
-
-    |
-
-    """
-    
-    if (fname.find("v22")>-1):
-        url = 'https://zenodo.org/record/6025794/files/v22_174_series.dat?download=1'
-    elif (fname.find("hhe.dat")>-1):
-        url = 'https://zenodo.org/record/6025794/files/sgc_vmm_hhe.dat?download=1'
-    elif (fname.find("sgc_vmm.dat")>-1):
-        url = 'https://zenodo.org/record/6025794/files/sgc_vmm.dat?download=1'
-    elif (fname.find("sgc_surf")>-1):
-        url = 'https://zenodo.org/record/6025794/files/sgc_surf.dat?download=1'
-    elif (fname.find("sgc_mesetas")>-1):
-        url = 'https://zenodo.org/record/6025794/files/sgc_mesetas.dat?download=1'
-    elif (fname.find("PASC")>-1):
-        url = 'https://zenodo.org/record/6025794/files/PASC.dat?download=1'
-    elif (fname.find("_src")>-1):
-        url = 'https://zenodo.org/record/6025794/files/mesetas_src.dat?download=1'
-    elif (fname.find("crisanto")>-1):
-        url = 'https://zenodo.org/record/6025794/files/crisanto_mesetas.dat?download=1'
-    elif (fname.find("akima")>-1):
-        url = 'https://zenodo.org/record/6025794/files/asc_akima.dat?download=1'
-    elif (fname.find("ADO")>-1):
-        url = 'https://zenodo.org/record/6025794/files/ADO.dat?download=1'
-    else:
-        data = -1
-        
-    data = np.loadtxt(url)
-    
-    return data
-
 def detrend(data, option = 'constant'):
     if option == 'constant':
         output = (data - np.mean(data))
@@ -130,8 +83,8 @@ def eigen_psd(data, k_DPSS, fs, nfft):
     """
     tapered_data = k_DPSS * data[np.newaxis, :]  # shape: (K, N)
     Jk = np.fft.fft(tapered_data, n=nfft, axis=1) * np.sqrt(1/fs) 
-    Smt_k = np.abs(Jk)**2
-    return Jk, Smt_k
+    Sn_k = np.abs(Jk)**2
+    return Jk, Sn_k
 
 
 
@@ -173,61 +126,65 @@ class MultiTaper_Periodogram:
         self.detrend = detrend
 
 
-
-    def MT_Spec(self, data: np.ndarray, fs:float):
+    def MT_Spec(self, data: np.ndarray, fs: float):
         """
         与えられた時系列データ x に対して、
         マルチテーパー (DPSS) 法で PSD を推定する。
 
         Parameters
         ----------
-        x : ndarray
+        data : ndarray
             1次元の時系列データ
-            Time Series data
+        fs : float
+            サンプリング周波数 [Hz]
 
         Returns
         -------
         f : ndarray
             周波数軸 (Frequency) [Hz]
         Pxx : ndarray
-            推定されたパワースペクトル (same data lenge 'f')
+            推定されたパワースペクトル (same length as 'f')
         """
         self.data = np.asarray(data)
         self.fs = fs
-        
         self.N = len(data)
-        # DPSS テーパーの生成 (shape: (K, N))
+
+        # DPSS テーパーの生成
         self.k_DPSS, self.eigenvalues, self.K = dpss(self.N, self.NW, self.K)
 
-        # # detrend
-        self.data = detrend(data,self.detrend)
+        # detrend
+        self.data = detrend(data, self.detrend)
+        self.xvar = np.var(self.data)
 
         # MT法によるスペクトル推定
         if self.nfft is None:
             self.nfft = len(data)
-        self.Jk, self.Smt_k = eigen_psd(self.data, self.k_DPSS, self.fs ,self.nfft) # (K, nfft)
-        self.f = np.fft.fftfreq(self.nfft, d=1/self.fs)
-        self.Smt = np.mean(self.Smt_k, axis=0)
+        self.Jk, self.Sn_k = eigen_psd(self.data, self.k_DPSS, self.fs, self.nfft)  # (K, nfft)
+        self.Sn = np.mean(self.Sn_k, axis=0)
 
         # 周波数軸とスペクトル化の場合分け
         if np.iscomplexobj(self.data):
             # 複素信号 → 両側スペクトル
-            self.f = np.fft.fftfreq(self.nfft, d=1/self.fs)   # 両側周波数軸
+            self.f = np.fft.fftfreq(self.nfft, d=1/self.fs)
             nfreq = len(self.f)
-            self.Smt_k = self.Smt_k[:, :nfreq]
+            self.Smt_k = self.Sn_k[:, :nfreq]
             self.Smt = np.mean(self.Smt_k, axis=0)
         else:
             # 実信号 → 片側スペクトル
-            self.f = np.fft.rfftfreq(self.nfft, d=1/self.fs)  # 片側周波数軸
+            self.f = np.fft.rfftfreq(self.nfft, d=1/self.fs)
             nfreq = len(self.f)
-            self.Smt_k = self.Smt_k[:, :nfreq] 
+            self.Smt_k = self.Sn_k[:, :nfreq]
             self.Smt = np.mean(self.Smt_k, axis=0)
-            self.Smt_k[1:-1] *= 2  # DCとNyquist以外を2倍
-            self.Smt[1:-1] *= 2  # DCとNyquist以外を2倍
+            # DCとNyquist以外を2倍補正
+            self.Smt_k[:, 1:-1] *= 2
+            self.Smt[1:-1] *= 2
 
-        print("self.k_DPS, self.eigenvalues,self.Jk, self.Smt_k, self.Smt, f")
-
-        return None
+        # Parseval スケール（片側補正後に計算）
+        df = self.fs / self.nfft
+        self.sscal = self.xvar / (np.sum(self.Smt) * df)
+        self.Smt   = self.Smt * self.sscal
+        self.Smt_k = self.Smt_k * self.sscal
+        return self.f, self.Smt
 
 
     def Harmonic_Ftest(self, p_level: float = 0.05):
@@ -253,7 +210,7 @@ class MultiTaper_Periodogram:
 
         # 各テーパーにおける H_k(0) の算出
         H_k0 = (1/self.fs) * np.sum(self.k_DPSS, axis=1)
-        H_k0[1::2] = 0  # 奇関数の和は0にする
+        H_k0[1::2] = 0  # 奇関数の和は`0なので明記
 
         # 回帰係数 C の算出
         H_k0_2sum = np.sum(H_k0**2)
@@ -269,12 +226,7 @@ class MultiTaper_Periodogram:
         # p値の計算
         p = stats.f.cdf(F, dof1, dof2)
 
-        # 周波数軸に合わせて切り出し
-        nfreq = len(self.f)
-        F = F[:nfreq]
-        p = p[:nfreq]
-
-        self.F_stat = np.zeros((2, nfreq), dtype=float)
+        self.F_stat = np.zeros((2, self.nfft), dtype=float)
         self.F_stat[0, :] = F
         self.F_stat[1, :] = p
 
@@ -288,14 +240,14 @@ class MultiTaper_Periodogram:
         nl = len(local_maxima)
 
         # スペクトル再構成
-        self.re_psd = np.zeros((3, nfreq), dtype=float)
+        self.re_psd = np.zeros((3, self.nfft), dtype=float)
 
         if nl == 0:
             # 有意な線スペクトルがない場合
-            self.re_psd[0, :] = self.Smt[:nfreq]
-            self.re_psd[1, :] = self.Smt[:nfreq]
-            self.re_psd[2, :] = np.zeros(nfreq, dtype=float)
-            self.k_psd_back = np.copy(self.Smt_k[:, :nfreq])
+            self.re_psd[0, :] = self.Sn
+            self.re_psd[1, :] = np.zeros(self.nfft, dtype=float)
+            self.re_psd[2, :] = self.Sn
+            self.k_psd_back = np.copy(self.Sn_k)
         else:
             # 有意な線スペクトルのみ残す
             C_test = np.zeros_like(C)
@@ -303,38 +255,51 @@ class MultiTaper_Periodogram:
 
             H_k = (1/self.fs) * np.fft.fft(self.k_DPSS, n=self.nfft, axis=1)
             back_Jk = np.copy(self.Jk)
+            Jk_line = np.zeros((kspec, self.nfft), dtype=complex)
 
             for i in local_maxima:
+                # ピーク近傍の周波数帯を定義
                 f_start = max(i - W_bin, 0)
                 f_end   = min(i + W_bin + 1, self.nfft)
-                f_band = np.arange(f_start, f_end)
+                f_band  = np.arange(f_start, f_end)
+
                 # H_k(f - f1) をバンド内で評価
                 jj = (f_band - i) % self.nfft
-                back_Jk[:, f_band] -= (C[i] / np.sqrt(1/self.fs)) * H_k[:, jj]
+                delta = (C_test[i] / np.sqrt(1/self.fs)) * H_k[:, jj]
+                back_Jk[:, f_band] -= delta
+                 # 帯域で引いた総エネルギー（ターパーごと）
+                E_removed = np.sum(delta, axis=1)                      # shape: (K,)
+                # ガウス窓（ピーク中心）。総和=1 に正規化して分配
+                x = np.arange(len(f_band)) - (len(f_band)//2)
+                sigma = W_bin / 1e6                                    # 幅は目的に応じて調整
+                W = np.exp(-(x**2) / (2*sigma**2))                     # shape: (|f_band|,)
+                W /= np.sum(W)                                         # 総和=1
+                # 引いた総エネルギーをガウス窓に従って線成分へ再分配（厳密保存）
+                Jk_line[:, f_band] += E_removed[:, None] * W[None, :]
 
 
             k_psd_back = (np.abs(back_Jk))**2
             re_mt_psd_back = np.mean(k_psd_back, axis=0)
 
-            # 線成分の再構成：各ピークの近傍のみ
-            S_line = np.zeros(self.nfft, dtype=float)
-            for i in local_maxima:
-                f_start = max(i - W_bin, 0)
-                f_end   = min(i + W_bin + 1, self.nfft)
-                f_band = np.arange(f_start, f_end)
-                jj = (f_band - i) % self.nfft
-                # |C|^2 * mean(|H_k|^2) / Δt を近傍にだけ加算
-                S_line[f_band] += (np.abs(C_test[i])**2) * np.mean(np.abs(H_k[:, jj])**2, axis=0) / (1/self.fs)
+            S_line =np.mean(np.abs(Jk_line)**2, axis=0)
 
-            # 合成
-            re_mt_psd = re_mt_psd_back + S_line
+            Jk_re = back_Jk + Jk_line
+            re_mt_psd =np.mean(np.abs(Jk_re)**2, axis=0)
 
-            # 出力に切り出し
-            self.k_psd_back = k_psd_back[:, :nfreq]
-            self.re_psd[0, :] = re_mt_psd_back[:nfreq]
-            self.re_psd[1, :] = re_mt_psd[:nfreq]
-            self.re_psd[2, :] = S_line[:nfreq]
-            if not np.iscomplexobj(self.data) and nfreq > 2:
-                self.k_psd_back[1:-1] *= 2  
-                self.re_psd[:,1:-1] *= 2 
-            return None
+            self.re_psd[0, :] = re_mt_psd_back
+            self.re_psd[1, :] = S_line
+            self.re_psd[2, :] = re_mt_psd
+            self.re_psd = self.re_psd *self.sscal
+
+
+        # 切り出し
+        nfreq = len(self.f)  # rfftfreqなら nfft//2+1
+        self.re_psd = self.re_psd[:,:nfreq]
+        self.F_stat  = self.F_stat[:, :nfreq]
+        
+        if not np.iscomplexobj(self.data) and nfreq > 2:
+            self.re_psd[:,1:-1] *= 2 
+
+        return None
+
+
