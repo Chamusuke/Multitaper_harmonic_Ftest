@@ -3,6 +3,12 @@ Spectrum Analysis Multitaper method and Harmonic Ftest
 Percival, D. B., & Walden, A. T. (1993). Spectral Analysis for Physical Applications. Cambridge University Press. https://doi.org/10.1017/CBO9780511622762\
 https://faculty.washington.edu/dbp/sapabook.html
 
+## Use
+```
+git clone https://github.com/Chamusuke/Multitaper_harmonic_Ftest.git
+cd  Multitaper_harmonic_Ftest
+pip install ./
+```
 
 
 ## Citation
