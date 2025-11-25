@@ -22,25 +22,36 @@ def detrend(data, option = 'constant'):
 
 def dpss(npts, nw, k=None):
     """
-    Slepian シーケンス(DPSS)の作成
+    Slepian シーケンス (DPSS: Discrete Prolate Spheroidal Sequences) の作成
+    Generate Slepian sequences (DPSS: Discrete Prolate Spheroidal Sequences)
 
     Parameters
     ----------
     npts : int
-        テーパーのポイント数 (データ長)
-    nw : float, optional
-        タイムバンド幅積 (time-bandwidth product)        
-    k : int
-        defalt -> 2*nw-1
-        2*nw異能の場合,固有値0.90以上のDPSSを採用する
-    
-    **Return*
+        テーパーのポイント数(データ長)
+        Number of points in each taper (data length)
+
+    nw : float
+        タイムバンド幅積 (time-bandwidth product)
+        Time-bandwidth product (NW)
+
+    k : int, optional
+        デフォルト値 -> 2*nw - 1
+        Default -> 2*nw - 1
+        もし 2*nw が整数の場合、固有値が 0.90 以上の DPSS を採用
+        If 2*nw is integer, adopt DPSS with eigenvalues >= 0.90
+
+    Returns
+    -------
     dpss : ndarray [k, npts]
-        K個のテーパー群
-    eigenvalues : adarray [k]
-        K個の固有値 帯域幅のエネルギー集中尺度
-    
+        K 個のテーパー群
+        Array of K tapers (DPSS sequences)
+
+    eigenvalues : ndarray [k]
+        K 個の固有値(帯域幅内のエネルギー集中度)
+        Array of K eigenvalues (measure of spectral concentration within bandwidth)
     """
+
     if k is None:
         k = int(2*nw-1)
            
@@ -57,13 +68,13 @@ def dpss(npts, nw, k=None):
         print(f"A unique taper of eigenvalues (>=0.90) was selected. K={k}")
 
     # -----------------------------------------------------
-    # 正規化（念のため再確認）
+    # 正規化(念のため再確認)
     # -----------------------------------------------------
     vnorm = np.sqrt(np.sum(k_DPSS**2, axis=1))  # 各テーパーのL2ノルム
     k_DPSS = k_DPSS / vnorm[:, None]            # 正規化して単位エネルギーに
 
     # -----------------------------------------------------
-    # 符号統一（positive-standard）
+    # 符号統一(positive-standard)
     # -----------------------------------------------------
     nx = npts % 2
     if nx == 1:
@@ -79,19 +90,48 @@ def dpss(npts, nw, k=None):
 
 def eigen_psd(data, k_DPSS, fs, nfft):
     """
-    各テーパーごとの固有周波数スペクトル及び固有パワースペクトル
+    各テーパーごとの固有周波数スペクトルおよび固有パワースペクトルを計算
+    Compute eigenfrequency spectra and eigen power spectra for each taper
+
+    Parameters
+    ----------
+    data : ndarray
+        入力時系列データ
+        Input time series data
+
+    k_DPSS : ndarray
+        DPSS(Slepianシーケンス)ターパー群
+        Set of DPSS (Slepian sequence) tapers
+
+    fs : float
+        サンプリング周波数 [Hz]
+        Sampling frequency [Hz]
+
+    nfft : int
+        FFT長(スペクトル分解能を決定)
+        FFT length (determines spectral resolution)
+
+    Returns
+    -------
+    eigenspectra : ndarray
+        各ターパーごとの周波数スペクトル(複素スペクトル)
+        Frequency spectra (complex) for each taper
+
+    eigen_psd : ndarray
+        各ターパーごとのパワースペクトル密度(PSD)
+        Power spectral density (PSD) for each taper
     """
+
     tapered_data = k_DPSS * data[np.newaxis, :]  # shape: (K, N)
     Jk = np.fft.fft(tapered_data, n=nfft, axis=1) * np.sqrt(1/fs) 
     Sn_k = np.abs(Jk)**2
     return Jk, Sn_k
 
 
-
 class MultiTaper_Periodogram:
     """
-    DPSS を用いたマルチターパー法での PSD 推定を行うクラス
-    this class is estimation of PSD using DPSS and Multitaper Method
+    DPSS を用いたマルチターパー法による PSD 推定を行うクラス
+    Class for PSD estimation using DPSS and the Multitaper Method
     """
     def __init__(
         self,
@@ -99,26 +139,40 @@ class MultiTaper_Periodogram:
         K: int = None,
         nfft: int = None,
         detrend: str = 'constant',
-        p_level:float = 0.05
+        p_level: float = 0.05
     ):
         """
         Parameters
         ----------
         fs : float
-            サンプリング周波数 (Sampling Frequency) [Hz]
+            サンプリング周波数 [Hz]
+            Sampling frequency [Hz]
+
         NW : float, optional
             タイムバンド幅積 (time-bandwidth product)
+            Time-bandwidth product (NW)
+
         K : int, optional
-            DPSS テーパー数  (DPSS Tapers)
+            DPSS テーパー数
+            Number of DPSS tapers
+
         nfft : int, optional
-            FFT のサンプル数 (Point od FFT))
-            データ長 以下なら信号の一部分で解析 以上なら0うめにより滑らかに
-        detrend :  { 'linear', 'constant' }, None optional
+            FFT のサンプル数
+            Number of FFT points
+            データ長以下なら信号の一部分で解析、以上ならゼロ埋めによりスペクトルを滑らかに
+            If less than data length, analyze part of the signal; if greater, apply zero-padding for smoother spectrum
+
+        detrend : {'linear', 'constant'}, None optional
             除去するトレンドの種類
-                'linear' (デフォルト): 一次の直線を最小二乗フィットして、それを引き算
-            Def 'constant': データの平均値(0次多項式 DC成分)を引き算
-        p_level: 
-            有意水準 default 0.05
+            Type of trend to remove
+                'linear': 一次直線を最小二乗フィットして引き算
+                          Fit and subtract a linear trend (default)
+                'constant': default データの平均値 (DC成分) を引き算
+                            Subtract mean value (DC component)
+
+        p_level : float, optional
+            有意水準 (default 0.05)
+            Significance level (default 0.05)
         """
         self.NW = NW
         self.K = K
@@ -126,25 +180,35 @@ class MultiTaper_Periodogram:
         self.detrend = detrend
 
 
+
     def MT_Spec(self, data: np.ndarray, fs: float):
         """
-        与えられた時系列データ x に対して、
-        マルチテーパー (DPSS) 法で PSD を推定する。
+        与えられた時系列データに対して、
+        マルチターパー (DPSS) 法を用いてパワースペクトル密度 (PSD) を推定する。
+        Estimate the Power Spectral Density (PSD) of a given time series
+        using the Multitaper method with DPSS tapers.
 
         Parameters
         ----------
         data : ndarray
             1次元の時系列データ
+            One-dimensional time series data
+
         fs : float
             サンプリング周波数 [Hz]
+            Sampling frequency [Hz]
 
         Returns
         -------
         f : ndarray
-            周波数軸 (Frequency) [Hz]
-        Pxx : ndarray
-            推定されたパワースペクトル (same length as 'f')
+            周波数軸 [Hz]
+            Frequency axis [Hz]
+
+        Smt : ndarray
+            推定されたパワースペクトル (長さは 'f' と同じ)
+            Estimated power spectral density (same length as 'f')
         """
+
         self.data = np.asarray(data)
         self.fs = fs
         self.N = len(data)
@@ -179,7 +243,7 @@ class MultiTaper_Periodogram:
             self.Smt_k[:, 1:-1] *= 2
             self.Smt[1:-1] *= 2
 
-        # Parseval スケール（片側補正後に計算）
+        # Parseval スケール(片側補正後に計算)
         df = self.fs / self.nfft
         self.sscal = self.xvar / (np.sum(self.Smt) * df)
         self.Smt   = self.Smt * self.sscal
@@ -196,7 +260,23 @@ class MultiTaper_Periodogram:
         ----------
         p_level : float
             Significance level (default 0.05)
+        
+        Returns
+        -------
+        re_psd : ndarray [3, nfft]
+            self.re_psd[0, :] -> 背景PSD (Background PSD)
+            self.re_psd[1, :] -> 線成分PSD (Line component PSD)
+            self.re_psd[2, :] -> 再構成PSD (Reconstructed multitaper PSD)
+
+        Notes
+        -----
+        F_stat と F_crit は Return には含まれず、クラス属性として利用可能。
+        F_stat and F_crit are not included in the return values,
+        but can be accessed directly as class attributes:
+            <Object>.F_stat
+            <Object>.F_crit
         """
+
 
         npts  = np.shape(self.k_DPSS)[1]    # DPSSターパーの長さ
         kspec = np.shape(self.k_DPSS)[0]    # DPSSターパーの本数
@@ -267,26 +347,26 @@ class MultiTaper_Periodogram:
                 jj = (f_band - i) % self.nfft
                 delta = (C_test[i] / np.sqrt(1/self.fs)) * H_k[:, jj]
                 back_Jk[:, f_band] -= delta
-                 # 帯域で引いた総エネルギー（ターパーごと）
+                 # 帯域で引いた総エネルギー(ターパーごと)
                 E_removed = np.sum(delta, axis=1)                      # shape: (K,)
-                # ガウス窓（ピーク中心）。総和=1 に正規化して分配
+                # ガウス窓(ピーク中心)。総和=1 に正規化して分配
                 x = np.arange(len(f_band)) - (len(f_band)//2)
                 sigma = W_bin / 1e6                                    # 幅は目的に応じて調整
                 W = np.exp(-(x**2) / (2*sigma**2))                     # shape: (|f_band|,)
                 W /= np.sum(W)                                         # 総和=1
-                # 引いた総エネルギーをガウス窓に従って線成分へ再分配（厳密保存）
+                # 引いた総エネルギーをガウス窓に従って線成分へ再分配(厳密保存)
                 Jk_line[:, f_band] += E_removed[:, None] * W[None, :]
 
 
             k_psd_back = (np.abs(back_Jk))**2
-            re_mt_psd_back = np.mean(k_psd_back, axis=0)
+            psd_back = np.mean(k_psd_back, axis=0)
 
             S_line =np.mean(np.abs(Jk_line)**2, axis=0)
 
             Jk_re = back_Jk + Jk_line
             re_mt_psd =np.mean(np.abs(Jk_re)**2, axis=0)
 
-            self.re_psd[0, :] = re_mt_psd_back
+            self.re_psd[0, :] = psd_back
             self.re_psd[1, :] = S_line
             self.re_psd[2, :] = re_mt_psd
             self.re_psd = self.re_psd *self.sscal
@@ -300,6 +380,6 @@ class MultiTaper_Periodogram:
         if not np.iscomplexobj(self.data) and nfreq > 2:
             self.re_psd[:,1:-1] *= 2 
 
-        return None
+        return self.re_psd
 
 
